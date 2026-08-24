@@ -16,3 +16,12 @@ spring:
               endpoint: /mcp
 server:
   port: 8082
+
+llm:
+  pricing:
+    input-per-mtok: 3.0
+    output-per-mtok: 15.0
+
+logging:
+  level:
+    dev.toleflaco.erp_purchasing_agent.agent: DEBUG
