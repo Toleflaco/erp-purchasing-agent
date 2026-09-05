@@ -22,6 +22,12 @@ llm:
     input-per-mtok: 3.0
     output-per-mtok: 15.0
 
+agent:
+  guardrails:
+    max-iterations: 5
+    max-tokens-budget: 20000
+    max-duration-ms: 60000
+
 logging:
   level:
     dev.toleflaco.erp_purchasing_agent.agent: DEBUG
