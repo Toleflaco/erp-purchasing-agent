@@ -1,0 +1,99 @@
+package dev.toleflaco.erp_purchasing_agent.agent;
+
+import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingManager;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+
+@ExtendWith(MockitoExtension.class)
+class ReActAgentTest {
+
+    @Mock
+    private ChatModel chatModel;
+
+    @Mock
+    private ToolCallingManager toolCallingManager;
+
+    private ReActAgent agent;
+    private Clock fixedClock;
+
+
+    @BeforeEach
+    void setUp() {
+        // crear el fixedClock (Clock.fixed(...) con una fecha determinista).
+        fixedClock = Clock.fixed(Instant.parse("2026-09-07T10:00:00Z"), ZoneOffset.UTC);
+
+
+        // TODO: instanciar ReActAgent pasando los 9 parametros:
+        agent = new ReActAgent(chatModel,
+                List.of(),
+                3.0,
+                15.0,
+                15,
+                10000,
+                100000,
+                toolCallingManager,
+                fixedClock);
+
+    }
+
+    @Test
+    void shouldReturnFinalTextWhenLlmHasNoToolCalls() {
+        // Given
+        ChatResponse response = buildResponseWithoutToolCalls("Hi there", 100, 50);
+        given(chatModel.call(any(Prompt.class))).willReturn(response);
+
+        // When
+        String result = agent.run("hello");
+
+        // Then
+        assertThat(result).isEqualTo("Hi there");
+        then(chatModel).should(times(1)).call(any(Prompt.class));
+    }
+
+    // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.
+    private ChatResponse buildResponseWithoutToolCalls(String text, int promptTokens, int completionTokens) {
+        // 1. Generation (mensaje del asistente + metadata de generacion)
+        Generation generation = new Generation(
+                new AssistantMessage(text),
+                ChatGenerationMetadata.builder().finishReason("end_turn").build()
+        );
+
+        // 2. Usage (mock, porque Usage es interface)
+        Usage usage = mock(Usage.class);
+        given(usage.getPromptTokens()).willReturn(promptTokens);
+        given(usage.getCompletionTokens()).willReturn(completionTokens);
+
+        // 3. Response metadata (agrega el Usage)
+        ChatResponseMetadata responseMetadata = ChatResponseMetadata.builder()
+                .usage(usage)
+                .build();
+
+        // 4. Response final
+        return new ChatResponse(List.of(generation), responseMetadata);
+    }
+}
