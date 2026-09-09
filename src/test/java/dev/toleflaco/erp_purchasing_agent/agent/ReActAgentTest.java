@@ -46,9 +46,7 @@ class ReActAgentTest {
     void setUp() {
         // crear el fixedClock (Clock.fixed(...) con una fecha determinista).
         fixedClock = Clock.fixed(Instant.parse("2026-09-07T10:00:00Z"), ZoneOffset.UTC);
-
-
-        // TODO: instanciar ReActAgent pasando los 9 parametros:
+        // instanciar ReActAgent pasando los 9 parametros:
         agent = new ReActAgent(chatModel,
                 List.of(),
                 3.0,
@@ -68,10 +66,10 @@ class ReActAgentTest {
         given(chatModel.call(any(Prompt.class))).willReturn(response);
 
         // When
-        String result = agent.run("hello");
+        AgentRunResult result = agent.run("hello");
 
         // Then
-        assertThat(result).isEqualTo("Hi there");
+        assertThat(result.text()).isEqualTo("Hi there");
         then(chatModel).should(times(1)).call(any(Prompt.class));
     }
 

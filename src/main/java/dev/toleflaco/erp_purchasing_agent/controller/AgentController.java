@@ -1,5 +1,6 @@
 package dev.toleflaco.erp_purchasing_agent.controller;
 
+import dev.toleflaco.erp_purchasing_agent.agent.AgentRunResult;
 import dev.toleflaco.erp_purchasing_agent.agent.ReActAgent;
 import dev.toleflaco.erp_purchasing_agent.dto.AgentRunRequest;
 import dev.toleflaco.erp_purchasing_agent.dto.AgentRunResponse;
@@ -28,7 +29,14 @@ public class AgentController {
 
     @PostMapping("/run")
     public AgentRunResponse run(@RequestBody AgentRunRequest request) {
-        return new AgentRunResponse(reActAgent.run(request.prompt()));
+        AgentRunResult result=  reActAgent.run(request.prompt());
+        return new AgentRunResponse(
+                result.text(),
+                result.iterations(),
+                result.tokensTotal(),
+                result.durationMs(),
+                result.costUsd()
+        );
     }
 
     @ExceptionHandler(GuardrailExceededException.class)

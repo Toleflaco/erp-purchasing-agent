@@ -63,7 +63,7 @@ public class ReActAgent {
         this.clock = clock;
     }
 
-    public String run(String prompt) {
+    public AgentRunResult run(String prompt) {
         // 1. Preparación (una sola vez)
         List<Message> messages = new ArrayList<>();
         messages.add(new UserMessage(prompt));
@@ -119,11 +119,19 @@ public class ReActAgent {
 
         // 4. Respuesta final del LLM sin tool calls
         double cost = (totalPromptTokens / 1_000_000.0) * inputCostPerMillionTokens + (totalCompletionTokens / 1_000_000.0) * outputCostPerMillionTokens;
+        long durationMs = Duration.between(start, clock.instant()).toMillis();
+        String finalText = response.getResult().getOutput().getText();
         log.debug("agent run completed iterations={} tokens_total={} duration_ms={} cost_usd={}", iteration,
                 totalPromptTokens + totalCompletionTokens,
-                Duration.between(start, clock.instant()).toMillis(),
+                durationMs,
                 String.format("%.6f", cost));
-        return response.getResult().getOutput().getText();
+        return new AgentRunResult(
+                finalText,
+                iteration,
+                totalPromptTokens + totalCompletionTokens,
+                durationMs,
+                cost
+        );
     }
 
     private String formatToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
