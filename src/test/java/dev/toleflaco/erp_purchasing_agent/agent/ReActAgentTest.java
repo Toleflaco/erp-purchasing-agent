@@ -26,6 +26,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -52,7 +53,7 @@ class ReActAgentTest {
     @BeforeEach
     void setUp() {
         // instanciar ReActAgent pasando los 9 parametros:
-        agent = buildAgent(DEFAULT_MAX_ITERATIONS,DEFAULT_MAX_TOKENS_BUDGET,DEFAULT_MAX_DURATION_MS,DEFAULT_CLOCK);
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK);
     }
 
     @Test
@@ -139,7 +140,7 @@ class ReActAgentTest {
         List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
         ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
         given(chatModel.call(any(Prompt.class)))
-                .willReturn(responseWithToolCalls, responseWithToolCalls, responseWithToolCalls, responseWithToolCalls,responseWithToolCalls);
+                .willReturn(responseWithToolCalls, responseWithToolCalls, responseWithToolCalls, responseWithToolCalls, responseWithToolCalls);
         given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
                 .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
 
@@ -151,6 +152,93 @@ class ReActAgentTest {
                 .hasFieldOrPropertyWithValue("limit", 4L);
 
     }
+
+    @Test
+    void shouldThrowGuardrailExceededWhenMaxDurationExceeded() {
+        // Given
+        Clock mockClock = mock(Clock.class);
+        long maxDurationMs = 150L;
+        Instant t0 = Instant.parse("2026-09-07T10:00:00Z");
+        Instant t1 = t0.plusMillis(200);  // 200ms después
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, maxDurationMs, mockClock);
+
+        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
+                "call-1",
+                "get_supplier_by_id",
+                "{\"nombre\":\"ACME\"}");
+        List<Message> historyAfterTool = List.of(ToolResponseMessage.builder()
+                .responses(List.of(toolResponse))
+                .build());
+        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        given(chatModel.call(any(Prompt.class)))
+                .willReturn(responseWithToolCalls);
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
+        given(mockClock.instant()).willReturn(t0, t1);
+        // Then
+        assertThatThrownBy(() -> agent.run("cual es el proveedor con id = 42"))
+                .isInstanceOf(GuardrailExceededException.class)
+                .hasFieldOrPropertyWithValue("type", GuardrailExceededException.GuardrailType.DURATION)
+                .hasFieldOrPropertyWithValue("value", 200L)
+                .hasFieldOrPropertyWithValue("limit", maxDurationMs);
+
+    }
+
+    @Test
+    void shouldThrowGuardrailExceededWhenMaxTokensBudgetExceeded() {
+        // Given
+        long maxBudget = 100L;
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, maxBudget, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK);
+
+        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
+                "call-1",
+                "get_supplier_by_id",
+                "{\"nombre\":\"ACME\"}");
+        List<Message> historyAfterTool = List.of(ToolResponseMessage.builder()
+                .responses(List.of(toolResponse))
+                .build());
+        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        given(chatModel.call(any(Prompt.class)))
+                .willReturn(responseWithToolCalls);
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
+        // Then
+        assertThatThrownBy(() -> agent.run("cual es el proveedor con id = 42"))
+                .isInstanceOf(GuardrailExceededException.class)
+                .hasFieldOrPropertyWithValue("type", GuardrailExceededException.GuardrailType.TOKENS)
+                .hasFieldOrPropertyWithValue("value", 150L)
+                .hasFieldOrPropertyWithValue("limit", maxBudget);
+
+    }
+
+    @Test
+    void shouldComputeTotalCostFromTokenUsage() {
+        // Given
+        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
+                "call-1",
+                "get_supplier_by_id",
+                "{\"nombre\":\"ACME\"}");
+        List<Message> historyAfterTool = List.of(ToolResponseMessage.builder()
+                .responses(List.of(toolResponse))
+                .build());
+
+        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 1000, 500);
+        ChatResponse finalResponse = buildResponseWithoutToolCalls("respuesta final", 1000, 500);
+
+        given(chatModel.call(any(Prompt.class)))
+                .willReturn(responseWithToolCalls, finalResponse);
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
+        // When
+        AgentRunResult result = agent.run("cual es el proveedor con id= 42");
+
+        // Then
+        assertThat(result.costUsd()).isEqualTo(0.021, within(1e-9));
+    }
+
 
     // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.
     private ChatResponse buildResponseWithoutToolCalls(String text, int promptTokens, int completionTokens) {
@@ -200,6 +288,7 @@ class ReActAgentTest {
         // 4. Response final
         return new ChatResponse(List.of(generation), responseMetadata);
     }
+
     private ReActAgent buildAgent(int maxIterations, long maxTokensBudget, long maxDurationMs, Clock clock) {
         return new ReActAgent(
                 chatModel,                              // fijo (campo @Mock)
@@ -213,11 +302,12 @@ class ReActAgentTest {
                 clock                                   // ← parámetro
         );
     }
+
     private ReActAgent buildAgent(int maxIterations) {
-        return buildAgent(maxIterations,DEFAULT_MAX_TOKENS_BUDGET,DEFAULT_MAX_DURATION_MS,DEFAULT_CLOCK);
+        return buildAgent(maxIterations, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK);
     }
 
     private ReActAgent buildAgent(Clock mockClock) {
-        return buildAgent(DEFAULT_MAX_ITERATIONS,DEFAULT_MAX_TOKENS_BUDGET,DEFAULT_MAX_DURATION_MS,mockClock);
+        return buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, mockClock);
     }
 }
