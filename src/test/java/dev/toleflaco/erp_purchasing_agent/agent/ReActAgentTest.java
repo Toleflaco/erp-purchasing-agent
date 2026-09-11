@@ -30,7 +30,9 @@ import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class ReActAgentTest {
@@ -49,6 +51,8 @@ class ReActAgentTest {
     static final Clock DEFAULT_CLOCK = Clock.fixed(Instant.parse("2026-09-07T10:00:00Z"), ZoneOffset.UTC);
     static final double DEFAULT_INPUT_COST_PER_MILLION_TOKENS = 3.0;
     static final double DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS = 15.0;
+    static final int DEFAULT_PROMPT_TOKENS = 100;
+    static final int DEFAULT_COMPLETION_TOKENS = 50;
 
     @BeforeEach
     void setUp() {
@@ -59,7 +63,7 @@ class ReActAgentTest {
     @Test
     void shouldReturnFinalTextWhenLlmHasNoToolCalls() {
         // Given
-        ChatResponse response = buildResponseWithoutToolCalls("Hi there", 100, 50);
+        ChatResponse response = buildResponseWithoutToolCalls("Hi there", DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
         given(chatModel.call(any(Prompt.class))).willReturn(response);
 
         // When
@@ -79,7 +83,7 @@ class ReActAgentTest {
                 .responses(List.of(toolResponse))
                 .build());
         List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
-        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
         ChatResponse finalResponse = buildResponseWithoutToolCalls("respuesta final", 200, 30);
 
         given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
@@ -107,9 +111,9 @@ class ReActAgentTest {
                 .build());
 
         List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
-        ChatResponse responseWithToolCalls1 = buildResponseWithToolCalls(null, toolCalls, 100, 50);
-        ChatResponse responseWithToolCalls2 = buildResponseWithToolCalls(null, toolCalls, 100, 50);
-        ChatResponse responseWithToolCalls3 = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls1 = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        ChatResponse responseWithToolCalls2 = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        ChatResponse responseWithToolCalls3 = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
         ChatResponse finalResponse = buildResponseWithoutToolCalls("respuesta final", 200, 30);
 
         given(chatModel.call(any(Prompt.class)))
@@ -138,7 +142,7 @@ class ReActAgentTest {
                 .build());
         agent = buildAgent(4);
         List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
-        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
         given(chatModel.call(any(Prompt.class)))
                 .willReturn(responseWithToolCalls, responseWithToolCalls, responseWithToolCalls, responseWithToolCalls, responseWithToolCalls);
         given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
@@ -170,7 +174,7 @@ class ReActAgentTest {
                 .responses(List.of(toolResponse))
                 .build());
         List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
-        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
         given(chatModel.call(any(Prompt.class)))
                 .willReturn(responseWithToolCalls);
         given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
@@ -199,7 +203,7 @@ class ReActAgentTest {
                 .responses(List.of(toolResponse))
                 .build());
         List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
-        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
         given(chatModel.call(any(Prompt.class)))
                 .willReturn(responseWithToolCalls);
         given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
