@@ -1,5 +1,6 @@
 package dev.toleflaco.erp_purchasing_agent.agent;
 
+import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,6 +25,7 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -39,24 +41,18 @@ class ReActAgentTest {
     private ToolCallingManager toolCallingManager;
 
     private ReActAgent agent;
-    private Clock fixedClock;
 
+    static final int DEFAULT_MAX_ITERATIONS = 15;
+    static final long DEFAULT_MAX_TOKENS_BUDGET = 10000;
+    static final long DEFAULT_MAX_DURATION_MS = 100000;
+    static final Clock DEFAULT_CLOCK = Clock.fixed(Instant.parse("2026-09-07T10:00:00Z"), ZoneOffset.UTC);
+    static final double DEFAULT_INPUT_COST_PER_MILLION_TOKENS = 3.0;
+    static final double DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS = 15.0;
 
     @BeforeEach
     void setUp() {
-        // crear el fixedClock (Clock.fixed(...) con una fecha determinista).
-        fixedClock = Clock.fixed(Instant.parse("2026-09-07T10:00:00Z"), ZoneOffset.UTC);
         // instanciar ReActAgent pasando los 9 parametros:
-        agent = new ReActAgent(chatModel,
-                List.of(),
-                3.0,
-                15.0,
-                15,
-                10000,
-                100000,
-                toolCallingManager,
-                fixedClock);
-
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS,DEFAULT_MAX_TOKENS_BUDGET,DEFAULT_MAX_DURATION_MS,DEFAULT_CLOCK);
     }
 
     @Test
@@ -81,11 +77,11 @@ class ReActAgentTest {
         List<Message> historyAfterTool = List.of(ToolResponseMessage.builder()
                 .responses(List.of(toolResponse))
                 .build());
-        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1","function","get_supplier_by_id", "{\"id\":42}"));
-        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null,toolCalls,100,50);
-        ChatResponse finalResponse = buildResponseWithoutToolCalls("respuesta final",200,30);
+        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse finalResponse = buildResponseWithoutToolCalls("respuesta final", 200, 30);
 
-        given(toolCallingManager.executeToolCalls(any(Prompt.class),any(ChatResponse.class)))
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
                 .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
         given(chatModel.call(any(Prompt.class)))
                 .willReturn(responseWithToolCalls, finalResponse);
@@ -95,9 +91,66 @@ class ReActAgentTest {
         // Then
         assertThat(result.text()).isEqualTo("respuesta final");
         verify(chatModel, times(2)).call(any(Prompt.class));
-        verify(toolCallingManager, times(1)).executeToolCalls(any(Prompt.class),any(ChatResponse.class));
+        verify(toolCallingManager, times(1)).executeToolCalls(any(Prompt.class), any(ChatResponse.class));
     }
 
+    @Test
+    void shouldReturnFinalTextAfterMultipleToolIterations() {
+        // Given
+        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
+                "call-1",
+                "get_supplier_by_id",
+                "{\"nombre\":\"ACME\"}");
+        List<Message> historyAfterTool = List.of(ToolResponseMessage.builder()
+                .responses(List.of(toolResponse))
+                .build());
+
+        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
+        ChatResponse responseWithToolCalls1 = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls2 = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse responseWithToolCalls3 = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        ChatResponse finalResponse = buildResponseWithoutToolCalls("respuesta final", 200, 30);
+
+        given(chatModel.call(any(Prompt.class)))
+                .willReturn(responseWithToolCalls1, responseWithToolCalls2, responseWithToolCalls3, finalResponse);
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
+        // When
+        AgentRunResult result = agent.run("cual es el proveedor con id= 42");
+
+        // Then
+        assertThat(result.text()).isEqualTo("respuesta final");
+        verify(chatModel, times(4)).call(any(Prompt.class));
+        verify(toolCallingManager, times(3)).executeToolCalls(any(Prompt.class), any(ChatResponse.class));
+    }
+
+    @Test
+    void shouldThrowGuardrailExceededWhenMaxIterationsExceeded() {
+
+        // Given
+        ToolResponseMessage.ToolResponse toolResponse = new ToolResponseMessage.ToolResponse(
+                "call-1",
+                "get_supplier_by_id",
+                "{\"nombre\":\"ACME\"}");
+        List<Message> historyAfterTool = List.of(ToolResponseMessage.builder()
+                .responses(List.of(toolResponse))
+                .build());
+        agent = buildAgent(4);
+        List<AssistantMessage.ToolCall> toolCalls = List.of(new AssistantMessage.ToolCall("call-1", "function", "get_supplier_by_id", "{\"id\":42}"));
+        ChatResponse responseWithToolCalls = buildResponseWithToolCalls(null, toolCalls, 100, 50);
+        given(chatModel.call(any(Prompt.class)))
+                .willReturn(responseWithToolCalls, responseWithToolCalls, responseWithToolCalls, responseWithToolCalls,responseWithToolCalls);
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
+
+        // Then
+        assertThatThrownBy(() -> agent.run("cual es el proveedor con id= 42"))
+                .isInstanceOf(GuardrailExceededException.class)
+                .hasFieldOrPropertyWithValue("type", GuardrailExceededException.GuardrailType.ITERATIONS)
+                .hasFieldOrPropertyWithValue("value", 4L)
+                .hasFieldOrPropertyWithValue("limit", 4L);
+
+    }
 
     // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.
     private ChatResponse buildResponseWithoutToolCalls(String text, int promptTokens, int completionTokens) {
@@ -147,5 +200,24 @@ class ReActAgentTest {
         // 4. Response final
         return new ChatResponse(List.of(generation), responseMetadata);
     }
+    private ReActAgent buildAgent(int maxIterations, long maxTokensBudget, long maxDurationMs, Clock clock) {
+        return new ReActAgent(
+                chatModel,                              // fijo (campo @Mock)
+                List.of(),                              // fijo (siempre lista vacía)
+                DEFAULT_INPUT_COST_PER_MILLION_TOKENS,  // fijo
+                DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS, // fijo
+                maxIterations,                          // ← parámetro
+                maxTokensBudget,                        // ← parámetro
+                maxDurationMs,                          // ← parámetro
+                toolCallingManager,                     // fijo (campo @Mock)
+                clock                                   // ← parámetro
+        );
+    }
+    private ReActAgent buildAgent(int maxIterations) {
+        return buildAgent(maxIterations,DEFAULT_MAX_TOKENS_BUDGET,DEFAULT_MAX_DURATION_MS,DEFAULT_CLOCK);
+    }
 
+    private ReActAgent buildAgent(Clock mockClock) {
+        return buildAgent(DEFAULT_MAX_ITERATIONS,DEFAULT_MAX_TOKENS_BUDGET,DEFAULT_MAX_DURATION_MS,mockClock);
+    }
 }
