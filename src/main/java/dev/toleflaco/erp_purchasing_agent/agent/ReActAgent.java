@@ -1,6 +1,8 @@
 package dev.toleflaco.erp_purchasing_agent.agent;
 
 
+import dev.toleflaco.erp_purchasing_agent.config.AgentGuardrailsProperties;
+import dev.toleflaco.erp_purchasing_agent.config.LlmPricingProperties;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.slf4j.Logger;
@@ -17,7 +19,6 @@ import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 import org.springframework.ai.tool.ToolCallback;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -35,32 +36,24 @@ public class ReActAgent {
     private static final Logger log = LoggerFactory.getLogger(ReActAgent.class);
     private final ChatModel chatModel;
     private final List<McpSyncClient> mcpClients;
-    private final double inputCostPerMillionTokens;
-    private final double outputCostPerMillionTokens;
-    private final long maxIterations;
-    private final long maxTokensBudget;
-    private final long maxDurationMs;
     private final ToolCallingManager toolCallingManager;
     private final Clock clock;
+    private final LlmPricingProperties llmPricing;
+    private final AgentGuardrailsProperties agentGuardrails;
 
     public ReActAgent(ChatModel chatModel,
                       List<McpSyncClient> mcpClients,
-                      @Value("${llm.pricing.input-per-mtok}") double inputCostPerMillionTokens,
-                      @Value("${llm.pricing.output-per-mtok}") double outputCostPerMillionTokens,
-                      @Value("${agent.guardrails.max-iterations}") long maxIterations,
-                      @Value("${agent.guardrails.max-tokens-budget}") long maxTokensBudget,
-                      @Value("${agent.guardrails.max-duration-ms}") long maxDurationMs,
                       ToolCallingManager toolCallingManager,
-                      Clock clock) {
+                      Clock clock,
+                      LlmPricingProperties llmPricing,
+                      AgentGuardrailsProperties agentGuardrails) {
         this.chatModel = chatModel;
         this.mcpClients = mcpClients;
-        this.inputCostPerMillionTokens = inputCostPerMillionTokens;
-        this.outputCostPerMillionTokens = outputCostPerMillionTokens;
-        this.maxIterations = maxIterations;
-        this.maxTokensBudget = maxTokensBudget;
-        this.maxDurationMs = maxDurationMs;
         this.toolCallingManager = toolCallingManager;
         this.clock = clock;
+        this.llmPricing = llmPricing;
+        this.agentGuardrails = agentGuardrails;
+
     }
 
     public AgentRunResult run(String prompt) {
@@ -96,19 +89,19 @@ public class ReActAgent {
                 log.debug("tool result iteration={} tool_name={} tool_call_id={} result={}", iteration, tr.name(), tr.id(), resultToLog);
             }
             currentPrompt = new Prompt(result.conversationHistory(), options);
-            if (iteration >= maxIterations) {
-                log.debug("guardrail exceeded type={} value={} limit={}", ITERATIONS, iteration, maxIterations);
-                throw new GuardrailExceededException(ITERATIONS, iteration, maxIterations);
+            if (iteration >= agentGuardrails.maxIterations()) {
+                log.debug("guardrail exceeded type={} value={} limit={}", ITERATIONS, iteration, agentGuardrails.maxIterations());
+                throw new GuardrailExceededException(ITERATIONS, iteration, agentGuardrails.maxIterations());
             }
             long totalTokens = totalPromptTokens + totalCompletionTokens;
-            if (totalTokens >= maxTokensBudget) {
-                log.debug("guardrail exceeded type={} value={} limit={}", TOKENS, totalTokens, maxTokensBudget);
-                throw new GuardrailExceededException(TOKENS, totalTokens, maxTokensBudget);
+            if (totalTokens >= agentGuardrails.maxTokensBudget()) {
+                log.debug("guardrail exceeded type={} value={} limit={}", TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
+                throw new GuardrailExceededException(TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
             }
             long elapsedMs = Duration.between(start, clock.instant()).toMillis();
-            if (elapsedMs >= maxDurationMs) {
-                log.debug("guardrail exceeded type={} value={} limit={}", DURATION, elapsedMs, maxDurationMs);
-                throw new GuardrailExceededException(DURATION, elapsedMs, maxDurationMs);
+            if (elapsedMs >= agentGuardrails.maxDurationMs()) {
+                log.debug("guardrail exceeded type={} value={} limit={}", DURATION, elapsedMs, agentGuardrails.maxDurationMs());
+                throw new GuardrailExceededException(DURATION, elapsedMs, agentGuardrails.maxDurationMs());
             }
             response = chatModel.call(currentPrompt);
             iteration++;
@@ -118,7 +111,7 @@ public class ReActAgent {
         }
 
         // 4. Respuesta final del LLM sin tool calls
-        double cost = (totalPromptTokens / 1_000_000.0) * inputCostPerMillionTokens + (totalCompletionTokens / 1_000_000.0) * outputCostPerMillionTokens;
+        double cost = (totalPromptTokens / 1_000_000.0) * llmPricing.inputPerMtok() + (totalCompletionTokens / 1_000_000.0) * llmPricing.outputPerMtok();
         long durationMs = Duration.between(start, clock.instant()).toMillis();
         String finalText = response.getResult().getOutput().getText();
         log.debug("agent run completed iterations={} tokens_total={} duration_ms={} cost_usd={}", iteration,

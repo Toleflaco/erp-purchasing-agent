@@ -1,5 +1,7 @@
 package dev.toleflaco.erp_purchasing_agent.agent;
 
+import dev.toleflaco.erp_purchasing_agent.config.AgentGuardrailsProperties;
+import dev.toleflaco.erp_purchasing_agent.config.LlmPricingProperties;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,15 +26,11 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.within;
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class ReActAgentTest {
@@ -294,16 +292,22 @@ class ReActAgentTest {
     }
 
     private ReActAgent buildAgent(int maxIterations, long maxTokensBudget, long maxDurationMs, Clock clock) {
+        LlmPricingProperties llmPricing = new LlmPricingProperties(
+                DEFAULT_INPUT_COST_PER_MILLION_TOKENS,
+                DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS);
+
+        AgentGuardrailsProperties agentGuardrails = new AgentGuardrailsProperties(
+                maxIterations,
+                maxTokensBudget,
+                maxDurationMs);
+
         return new ReActAgent(
-                chatModel,                              // fijo (campo @Mock)
-                List.of(),                              // fijo (siempre lista vacía)
-                DEFAULT_INPUT_COST_PER_MILLION_TOKENS,  // fijo
-                DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS, // fijo
-                maxIterations,                          // ← parámetro
-                maxTokensBudget,                        // ← parámetro
-                maxDurationMs,                          // ← parámetro
-                toolCallingManager,                     // fijo (campo @Mock)
-                clock                                   // ← parámetro
+                chatModel,
+                List.of(),
+                toolCallingManager,
+                clock,
+                llmPricing,
+                agentGuardrails
         );
     }
 
