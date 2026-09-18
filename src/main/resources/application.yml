@@ -29,6 +29,14 @@ agent:
     max-iterations: 5
     max-tokens-budget: 20000
     max-duration-ms: 60000
+  hitl:
+    ttl: 24h
+    sensitive-tools:
+      - createSupplier
+      - sendPurchaseOrder
+      - cancelPurchaseOrder
+      - receivePurchaseOrder
+      - updateProductStock
 
 logging:
   level:
