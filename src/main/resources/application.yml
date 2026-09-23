@@ -16,6 +16,10 @@ spring:
               endpoint: /mcp
   jackson:
     property-naming-strategy: SNAKE_CASE
+  data:
+    redis:
+      host: localhost
+      port: 6381
 server:
   port: 8082
 
