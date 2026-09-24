@@ -9,9 +9,9 @@ import java.util.Optional;
 @Component
 public class RunStateRepository {
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisTemplate<String, AgentRunSession> redisTemplate;
 
-    public RunStateRepository(RedisTemplate<String, Object> redisTemplate) {
+    public RunStateRepository(RedisTemplate<String, AgentRunSession> redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
 
@@ -24,7 +24,7 @@ public class RunStateRepository {
     }
 
     public Optional<AgentRunSession> findById(String runId) {
-        AgentRunSession session = (AgentRunSession) redisTemplate.opsForValue().get(key(runId));
+        AgentRunSession session = redisTemplate.opsForValue().get(key(runId));
         return Optional.ofNullable(session);
     }
 
