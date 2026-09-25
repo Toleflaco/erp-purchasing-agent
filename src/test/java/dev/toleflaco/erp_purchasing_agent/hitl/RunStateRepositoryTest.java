@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -28,6 +30,9 @@ class RunStateRepositoryTest {
 
     @Autowired
     RunStateRepository repository;
+
+    @Autowired
+    RedisTemplate<String,AgentRunSession> template;
 
     @Test
     void saveAndFindByIdReturnsSameSession() {
@@ -73,6 +78,19 @@ class RunStateRepositoryTest {
         Optional<AgentRunSession> after = repository.findById(runId);
         // Then
         assertTrue(after.isEmpty());
+    }
+
+    @Test
+    void saveAssignsTtlToSession (){
+        // Given
+        String runId = UUID.randomUUID().toString();
+        AgentRunSession session = AgentRunSessionFixtures.sample(runId);
+        // When
+
+        repository.save(session, Duration.ofMinutes(4));
+        Long ttl = template.getExpire("hitl:session:" + runId, TimeUnit.SECONDS);
+        // Then
+        assertTrue(ttl > 0 && ttl <= 240,"TTL fuera de rango: " + ttl);
     }
 
 }
