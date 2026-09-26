@@ -27,6 +27,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.then;
@@ -66,9 +68,9 @@ class ReActAgentTest {
 
         // When
         AgentRunResult result = agent.run("hello");
-
+        AgentRunResult.Completed completed = assertInstanceOf(AgentRunResult.Completed.class, result);
         // Then
-        assertThat(result.text()).isEqualTo("Hi there");
+        assertThat(completed.text()).isEqualTo("Hi there");
         then(chatModel).should(times(1)).call(any(Prompt.class));
     }
 
@@ -90,9 +92,9 @@ class ReActAgentTest {
                 .willReturn(responseWithToolCalls, finalResponse);
         // When
         AgentRunResult result = agent.run("cual es el proveedor con id= 42");
-
+        AgentRunResult.Completed completed = assertInstanceOf(AgentRunResult.Completed.class, result);
         // Then
-        assertThat(result.text()).isEqualTo("respuesta final");
+        assertThat(completed.text()).isEqualTo("respuesta final");
         verify(chatModel, times(2)).call(any(Prompt.class));
         verify(toolCallingManager, times(1)).executeToolCalls(any(Prompt.class), any(ChatResponse.class));
     }
@@ -120,9 +122,9 @@ class ReActAgentTest {
                 .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
         // When
         AgentRunResult result = agent.run("cual es el proveedor con id= 42");
-
+        AgentRunResult.Completed completed = assertInstanceOf(AgentRunResult.Completed.class, result);
         // Then
-        assertThat(result.text()).isEqualTo("respuesta final");
+        assertThat(completed.text()).isEqualTo("respuesta final");
         verify(chatModel, times(4)).call(any(Prompt.class));
         verify(toolCallingManager, times(3)).executeToolCalls(any(Prompt.class), any(ChatResponse.class));
     }
@@ -236,9 +238,9 @@ class ReActAgentTest {
                 .willReturn(ToolExecutionResult.builder().conversationHistory(historyAfterTool).build());
         // When
         AgentRunResult result = agent.run("cual es el proveedor con id= 42");
-
+        AgentRunResult.Completed completed = assertInstanceOf(AgentRunResult.Completed.class, result);
         // Then
-        assertThat(result.costUsd()).isEqualTo(0.021, within(1e-9));
+        assertThat(completed.costUsd()).isEqualTo(0.021, within(1e-9));
     }
 
 

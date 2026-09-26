@@ -118,7 +118,7 @@ public class ReActAgent {
                 totalPromptTokens + totalCompletionTokens,
                 durationMs,
                 String.format("%.6f", cost));
-        return new AgentRunResult(
+        return new AgentRunResult.Completed(
                 finalText,
                 iteration,
                 totalPromptTokens + totalCompletionTokens,

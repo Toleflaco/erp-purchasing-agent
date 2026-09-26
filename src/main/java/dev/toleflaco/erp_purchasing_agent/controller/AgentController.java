@@ -29,14 +29,14 @@ public class AgentController {
 
     @PostMapping("/run")
     public AgentRunResponse run(@RequestBody AgentRunRequest request) {
-        AgentRunResult result=  reActAgent.run(request.prompt());
-        return new AgentRunResponse(
-                result.text(),
-                result.iterations(),
-                result.tokensTotal(),
-                result.durationMs(),
-                result.costUsd()
-        );
+        AgentRunResult result = reActAgent.run(request.prompt());
+        return switch (result) {
+            case AgentRunResult.Completed c -> new AgentRunResponse(
+                    c.text(), c.iterations(), c.tokensTotal(), c.durationMs(), c.costUsd()
+            );
+            case AgentRunResult.Paused p ->
+                    throw new UnsupportedOperationException("HITL response mapping — pending next block");
+        };
     }
 
     @ExceptionHandler(GuardrailExceededException.class)
