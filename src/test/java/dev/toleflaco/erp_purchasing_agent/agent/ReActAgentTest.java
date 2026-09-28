@@ -3,7 +3,12 @@ package dev.toleflaco.erp_purchasing_agent.agent;
 import dev.toleflaco.erp_purchasing_agent.config.AgentGuardrailsProperties;
 import dev.toleflaco.erp_purchasing_agent.config.LlmPricingProperties;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
+import dev.toleflaco.erp_purchasing_agent.hitl.AgentMessage;
+import dev.toleflaco.erp_purchasing_agent.hitl.HitlProperties;
+import dev.toleflaco.erp_purchasing_agent.hitl.MessageMapper;
+import dev.toleflaco.erp_purchasing_agent.hitl.RunStateRepository;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -22,9 +27,11 @@ import org.springframework.ai.model.tool.ToolCallingManager;
 import org.springframework.ai.model.tool.ToolExecutionResult;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -43,6 +50,12 @@ class ReActAgentTest {
     @Mock
     private ToolCallingManager toolCallingManager;
 
+    @Mock
+    private RunStateRepository runStateRepository;
+
+
+    private final MessageMapper messageMapper = new MessageMapper();
+
     private ReActAgent agent;
 
     static final int DEFAULT_MAX_ITERATIONS = 15;
@@ -53,6 +66,8 @@ class ReActAgentTest {
     static final double DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS = 15.0;
     static final int DEFAULT_PROMPT_TOKENS = 100;
     static final int DEFAULT_COMPLETION_TOKENS = 50;
+    static final HitlProperties HITL_OFF = new HitlProperties(Set.of(), Duration.ofHours(24));
+    private static final HitlProperties HITL_SENDS_ON = new HitlProperties(Set.of("sendPurchaseOrder"), Duration.ofHours(24));
 
     @BeforeEach
     void setUp() {
@@ -243,6 +258,35 @@ class ReActAgentTest {
         assertThat(completed.costUsd()).isEqualTo(0.021, within(1e-9));
     }
 
+    @Test
+    void shouldReturnPausedWhenLlmCallsSensitiveTool() {
+
+        // Given
+        List<AssistantMessage.ToolCall> toolCalls = List.of(
+                new AssistantMessage.ToolCall(
+                        "call-1",
+                        "function",
+                        "sendPurchaseOrder",
+                        "{\"purchaseOrderId\":42}"
+
+                )
+        );
+        ChatResponse responseWithSensitiveTool = buildResponseWithToolCalls(
+                null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        given(chatModel.call(any(Prompt.class))).willReturn(responseWithSensitiveTool);
+
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK, HITL_SENDS_ON);
+
+        // When
+        AgentRunResult result = agent.run("envia la orden 42");
+        AgentRunResult.Paused paused = assertInstanceOf(AgentRunResult.Paused.class, result);
+
+        // Then
+        assertThat(paused.pendingToolName()).isEqualTo("sendPurchaseOrder");
+        assertThat(paused.iterations()).isEqualTo(1);
+        then(toolCallingManager).should(never()).executeToolCalls(any(),any());
+        then(runStateRepository).should(times(1)).save(any(),any());
+    }
 
     // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.
     private ChatResponse buildResponseWithoutToolCalls(String text, int promptTokens, int completionTokens) {
@@ -293,7 +337,7 @@ class ReActAgentTest {
         return new ChatResponse(List.of(generation), responseMetadata);
     }
 
-    private ReActAgent buildAgent(int maxIterations, long maxTokensBudget, long maxDurationMs, Clock clock) {
+    private ReActAgent buildAgent(int maxIterations, long maxTokensBudget, long maxDurationMs, Clock clock, HitlProperties hitl) {
         LlmPricingProperties llmPricing = new LlmPricingProperties(
                 DEFAULT_INPUT_COST_PER_MILLION_TOKENS,
                 DEFAULT_OUTPUT_COST_PER_MILLION_TOKENS);
@@ -309,8 +353,15 @@ class ReActAgentTest {
                 toolCallingManager,
                 clock,
                 llmPricing,
-                agentGuardrails
+                agentGuardrails,
+                hitl,
+                runStateRepository,
+                messageMapper
         );
+    }
+
+    private ReActAgent buildAgent(int maxIterations, long maxTokensBudget, long maxDurationMs, Clock clock) {
+        return buildAgent(maxIterations, maxTokensBudget, maxDurationMs, clock, HITL_OFF);
     }
 
     private ReActAgent buildAgent(int maxIterations) {

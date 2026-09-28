@@ -4,6 +4,11 @@ package dev.toleflaco.erp_purchasing_agent.agent;
 import dev.toleflaco.erp_purchasing_agent.config.AgentGuardrailsProperties;
 import dev.toleflaco.erp_purchasing_agent.config.LlmPricingProperties;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
+import dev.toleflaco.erp_purchasing_agent.hitl.AgentMessage;
+import dev.toleflaco.erp_purchasing_agent.hitl.AgentRunSession;
+import dev.toleflaco.erp_purchasing_agent.hitl.HitlProperties;
+import dev.toleflaco.erp_purchasing_agent.hitl.MessageMapper;
+import dev.toleflaco.erp_purchasing_agent.hitl.RunStateRepository;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +31,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException.GuardrailType.*;
@@ -40,20 +47,28 @@ public class ReActAgent {
     private final Clock clock;
     private final LlmPricingProperties llmPricing;
     private final AgentGuardrailsProperties agentGuardrails;
+    private final HitlProperties hitlProperties;
+    private final RunStateRepository repository;
+    private final MessageMapper mapper;
 
     public ReActAgent(ChatModel chatModel,
                       List<McpSyncClient> mcpClients,
                       ToolCallingManager toolCallingManager,
                       Clock clock,
                       LlmPricingProperties llmPricing,
-                      AgentGuardrailsProperties agentGuardrails) {
+                      AgentGuardrailsProperties agentGuardrails,
+                      HitlProperties hitlProperties,
+                      RunStateRepository repository,
+                      MessageMapper mapper) {
         this.chatModel = chatModel;
         this.mcpClients = mcpClients;
         this.toolCallingManager = toolCallingManager;
         this.clock = clock;
         this.llmPricing = llmPricing;
         this.agentGuardrails = agentGuardrails;
-
+        this.hitlProperties = hitlProperties;
+        this.repository = repository;
+        this.mapper = mapper;
     }
 
     public AgentRunResult run(String prompt) {
@@ -81,6 +96,36 @@ public class ReActAgent {
         totalCompletionTokens += response.getMetadata().getUsage().getCompletionTokens();
         // 3. Bucle ReAct: mientras el LLM siga pidiendo tools, itera
         while (response.hasToolCalls()) {
+            // Extraer las tools calls
+            List<AssistantMessage.ToolCall> toolCalls = response.getResult().getOutput().getToolCalls();
+            Optional<AssistantMessage.ToolCall> sensitiveToolCall = toolCalls.stream()
+                    .filter(toolCall -> hitlProperties.sensitiveTools().contains(toolCall.name())).findFirst();
+            if (sensitiveToolCall.isPresent()) {
+                AssistantMessage.ToolCall pending = sensitiveToolCall.get();
+                String runId = UUID.randomUUID().toString();
+                double cost = computeCost(totalPromptTokens,totalCompletionTokens);
+                long durationMs = computeElapsedMs(start);
+                List<Message> fullHistory = new ArrayList<>(currentPrompt.getInstructions());
+                fullHistory.add(response.getResult().getOutput());
+                List<AgentMessage> history = mapper.toAgent(fullHistory);
+                AgentRunSession session = new AgentRunSession(
+                        runId,
+                        durationMs,
+                        totalPromptTokens + totalCompletionTokens,
+                        cost,
+                        iteration,
+                        history
+                );
+                repository.save(session,hitlProperties.ttl());
+                return new AgentRunResult.Paused(
+                        runId,
+                        pending.name(),
+                        iteration,
+                        totalPromptTokens + totalCompletionTokens,
+                        durationMs,
+                        cost
+                );
+            }
             ToolExecutionResult result = toolCallingManager.executeToolCalls(currentPrompt, response);
             log.debug("iteration start iteration={} messages_size={} tokens_accumulated={}", iteration + 1, result.conversationHistory().size(), totalPromptTokens + totalCompletionTokens);
             ToolResponseMessage toolResponseMessage = (ToolResponseMessage) result.conversationHistory().get(result.conversationHistory().size() - 1);
@@ -98,7 +143,7 @@ public class ReActAgent {
                 log.debug("guardrail exceeded type={} value={} limit={}", TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
                 throw new GuardrailExceededException(TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
             }
-            long elapsedMs = Duration.between(start, clock.instant()).toMillis();
+            long elapsedMs = computeElapsedMs(start);
             if (elapsedMs >= agentGuardrails.maxDurationMs()) {
                 log.debug("guardrail exceeded type={} value={} limit={}", DURATION, elapsedMs, agentGuardrails.maxDurationMs());
                 throw new GuardrailExceededException(DURATION, elapsedMs, agentGuardrails.maxDurationMs());
@@ -111,8 +156,8 @@ public class ReActAgent {
         }
 
         // 4. Respuesta final del LLM sin tool calls
-        double cost = (totalPromptTokens / 1_000_000.0) * llmPricing.inputPerMtok() + (totalCompletionTokens / 1_000_000.0) * llmPricing.outputPerMtok();
-        long durationMs = Duration.between(start, clock.instant()).toMillis();
+        double cost = computeCost(totalPromptTokens,totalCompletionTokens);
+        long durationMs = computeElapsedMs(start);
         String finalText = response.getResult().getOutput().getText();
         log.debug("agent run completed iterations={} tokens_total={} duration_ms={} cost_usd={}", iteration,
                 totalPromptTokens + totalCompletionTokens,
@@ -147,5 +192,13 @@ public class ReActAgent {
             String textToLog = text.length() > 200 ? text.substring(0, 200) + "...(truncated, " + text.length() + " total chars)" : text;
             log.debug("llm response iteration={} finish_reason={} tool_calls={} tokens_in={} tokens_out={} text={}", iteration, finishReason, toolCalls, promptTokens, completionTokens, textToLog);
         }
+    }
+
+    private double computeCost(int promptToken, int completionToken) {
+        return (promptToken / 1_000_000.0) * llmPricing.inputPerMtok() + (completionToken / 1_000_000.0) * llmPricing.outputPerMtok();
+    }
+
+    private long computeElapsedMs(Instant start) {
+        return Duration.between(start, clock.instant()).toMillis();
     }
 }

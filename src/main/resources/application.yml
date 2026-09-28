@@ -36,7 +36,6 @@ agent:
   hitl:
     ttl: 24h
     sensitive-tools:
-      - createSupplier
       - sendPurchaseOrder
       - cancelPurchaseOrder
       - receivePurchaseOrder
