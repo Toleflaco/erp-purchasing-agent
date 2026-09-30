@@ -6,6 +6,7 @@ import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
 import dev.toleflaco.erp_purchasing_agent.hitl.AgentMessage;
 import dev.toleflaco.erp_purchasing_agent.hitl.HitlProperties;
 import dev.toleflaco.erp_purchasing_agent.hitl.MessageMapper;
+import dev.toleflaco.erp_purchasing_agent.hitl.PendingToolCall;
 import dev.toleflaco.erp_purchasing_agent.hitl.RunStateRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
@@ -282,10 +283,53 @@ class ReActAgentTest {
         AgentRunResult.Paused paused = assertInstanceOf(AgentRunResult.Paused.class, result);
 
         // Then
-        assertThat(paused.pendingToolName()).isEqualTo("sendPurchaseOrder");
+        assertThat(paused.pendingToolCalls())
+                .hasSize(1)
+                .first()
+                .extracting(PendingToolCall::name, PendingToolCall::arguments)
+                .containsExactly("sendPurchaseOrder", "{\"purchaseOrderId\":42}");
+
         assertThat(paused.iterations()).isEqualTo(1);
-        then(toolCallingManager).should(never()).executeToolCalls(any(),any());
-        then(runStateRepository).should(times(1)).save(any(),any());
+        then(toolCallingManager).should(never()).executeToolCalls(any(), any());
+        then(runStateRepository).should(times(1)).save(any(), any());
+    }
+
+    @Test
+    void shouldReturnAllPendingToolCallsWhenLlmMixesSensitiveAndSafeTools() {
+        // Given
+        List<AssistantMessage.ToolCall> toolCalls = List.of(
+                new AssistantMessage.ToolCall(
+                        "call-1",
+                        "function",
+                        "sendPurchaseOrder",
+                        "{\"purchaseOrderId\":42}"
+                ),
+                new AssistantMessage.ToolCall(
+                        "call-2",
+                        "function",
+                        "getSupplier",
+                        "{\"supplierId\":7}"
+                )
+        );
+        ChatResponse responseWithSensitiveTool = buildResponseWithToolCalls(
+                null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        given(chatModel.call(any(Prompt.class))).willReturn(responseWithSensitiveTool);
+
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK, HITL_SENDS_ON);
+
+        // When
+        AgentRunResult result = agent.run("envia la orden 42");
+        AgentRunResult.Paused paused = assertInstanceOf(AgentRunResult.Paused.class, result);
+
+        // Then
+        assertThat(paused.pendingToolCalls())
+                .hasSize(2)
+                .extracting(PendingToolCall::name, PendingToolCall::arguments)
+                .containsExactly(tuple("sendPurchaseOrder", "{\"purchaseOrderId\":42}"),tuple("getSupplier","{\"supplierId\":7}"));
+
+        assertThat(paused.iterations()).isEqualTo(1);
+        then(toolCallingManager).should(never()).executeToolCalls(any(), any());
+        then(runStateRepository).should(times(1)).save(any(), any());
     }
 
     // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.

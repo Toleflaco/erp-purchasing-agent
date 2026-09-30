@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,14 +29,22 @@ public class AgentController {
     }
 
     @PostMapping("/run")
-    public AgentRunResponse run(@RequestBody AgentRunRequest request) {
+    public ResponseEntity<AgentRunResponse> run(@RequestBody AgentRunRequest request) {
         AgentRunResult result = reActAgent.run(request.prompt());
         return switch (result) {
-            case AgentRunResult.Completed c -> new AgentRunResponse(
+            case AgentRunResult.Completed c -> ResponseEntity.ok(new AgentRunResponse.Completed(
                     c.text(), c.iterations(), c.tokensTotal(), c.durationMs(), c.costUsd()
-            );
+            ));
             case AgentRunResult.Paused p ->
-                    throw new UnsupportedOperationException("HITL response mapping — pending next block");
+                    ResponseEntity.accepted().body(new AgentRunResponse.Paused(
+                            p.runId(),
+                            request.prompt(),
+                            p.pendingToolCalls(),
+                            p.iterations(),
+                            p.tokensTotal(),
+                            p.durationMs(),
+                            p.costUsd()
+                    ));
         };
     }
 

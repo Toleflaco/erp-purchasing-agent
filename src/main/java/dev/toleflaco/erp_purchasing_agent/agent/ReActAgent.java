@@ -101,7 +101,6 @@ public class ReActAgent {
             Optional<AssistantMessage.ToolCall> sensitiveToolCall = toolCalls.stream()
                     .filter(toolCall -> hitlProperties.sensitiveTools().contains(toolCall.name())).findFirst();
             if (sensitiveToolCall.isPresent()) {
-                AssistantMessage.ToolCall pending = sensitiveToolCall.get();
                 String runId = UUID.randomUUID().toString();
                 double cost = computeCost(totalPromptTokens,totalCompletionTokens);
                 long durationMs = computeElapsedMs(start);
@@ -119,7 +118,7 @@ public class ReActAgent {
                 repository.save(session,hitlProperties.ttl());
                 return new AgentRunResult.Paused(
                         runId,
-                        pending.name(),
+                        mapper.toPendingToolCalls(toolCalls),
                         iteration,
                         totalPromptTokens + totalCompletionTokens,
                         durationMs,

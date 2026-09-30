@@ -1,4 +1,9 @@
 package dev.toleflaco.erp_purchasing_agent.agent;
+
+import dev.toleflaco.erp_purchasing_agent.hitl.PendingToolCall;
+
+import java.util.List;
+
 public sealed interface AgentRunResult
         permits AgentRunResult.Completed, AgentRunResult.Paused {
 
@@ -12,7 +17,7 @@ public sealed interface AgentRunResult
 
         record Paused(
                 String runId,
-                String pendingToolName,
+                List<PendingToolCall> pendingToolCalls,
                 long iterations,
                 long tokensTotal,
                 long durationMs,

@@ -27,6 +27,11 @@ public class MessageMapper {
                 .toList();
     }
 
+    public List<PendingToolCall> toPendingToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
+        return toolCalls.stream()
+                .map(tc->new PendingToolCall(tc.name(),tc.arguments()))
+                .toList();
+    }
 
     private AgentMessage toAgentSingle(Message message) {
         return switch (message) {
