@@ -4,6 +4,7 @@ import dev.toleflaco.erp_purchasing_agent.config.AgentGuardrailsProperties;
 import dev.toleflaco.erp_purchasing_agent.config.LlmPricingProperties;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
 import dev.toleflaco.erp_purchasing_agent.hitl.AgentMessage;
+import dev.toleflaco.erp_purchasing_agent.hitl.AgentRunSession;
 import dev.toleflaco.erp_purchasing_agent.hitl.HitlProperties;
 import dev.toleflaco.erp_purchasing_agent.hitl.MessageMapper;
 import dev.toleflaco.erp_purchasing_agent.hitl.PendingToolCall;
@@ -17,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
@@ -32,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.*;
@@ -325,11 +328,119 @@ class ReActAgentTest {
         assertThat(paused.pendingToolCalls())
                 .hasSize(2)
                 .extracting(PendingToolCall::name, PendingToolCall::arguments)
-                .containsExactly(tuple("sendPurchaseOrder", "{\"purchaseOrderId\":42}"),tuple("getSupplier","{\"supplierId\":7}"));
+                .containsExactly(tuple("sendPurchaseOrder", "{\"purchaseOrderId\":42}"), tuple("getSupplier", "{\"supplierId\":7}"));
 
         assertThat(paused.iterations()).isEqualTo(1);
         then(toolCallingManager).should(never()).executeToolCalls(any(), any());
         then(runStateRepository).should(times(1)).save(any(), any());
+    }
+
+    @Test
+    void shouldReturnCompletedWhenResumeExecutesPendingToolAndLlmFinishes() {
+
+        // Given
+        List<AssistantMessage.ToolCall> toolCalls = List.of(
+                new AssistantMessage.ToolCall(
+                        "call-1",
+                        "function",
+                        "sendPurchaseOrder",
+                        "{\"purchaseOrderId\":42}"
+
+                )
+        );
+        UserMessage userMessage = new UserMessage("Mensaje usuario");
+        AssistantMessage assistantMessage = AssistantMessage.builder()
+                .content(null)
+                .toolCalls(toolCalls)
+                .build();
+        List<AgentMessage> history = messageMapper.toAgent(List.of(userMessage, assistantMessage));
+
+        AgentRunSession session = new AgentRunSession(
+                "run-123",
+                5000L,
+                500L,
+                0.002,
+                1,
+                history
+        );
+        given(runStateRepository.findById("run-123"))
+                .willReturn(Optional.of(session));
+        ToolResponseMessage.ToolResponse toolResponse =
+                new ToolResponseMessage.ToolResponse("call-1", "sendPurchaseOrder", "resultado");
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(
+                                List.of(ToolResponseMessage.builder().responses(List.of(toolResponse)).build()))
+                        .build());
+        ChatResponse responseWithSensitiveTool = buildResponseWithoutToolCalls("orden enviada", DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        given(chatModel.call(any(Prompt.class))).willReturn(responseWithSensitiveTool);
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK, HITL_SENDS_ON);
+
+        // When
+        AgentRunResult result = agent.resume("run-123");
+
+        // Then
+        AgentRunResult.Completed completed = assertInstanceOf(AgentRunResult.Completed.class, result);
+        assertThat(completed.text()).isEqualTo("orden enviada");
+        assertThat(completed.iterations()).isEqualTo(2);
+        assertThat(completed.tokensTotal()).isEqualTo(650);
+        then(runStateRepository).should().deleteById("run-123");
+
+    }
+
+    @Test
+    void shouldReturnPausedAgainWhenResumeHitsAnotherSensitiveTool() {
+
+
+        // Given
+        List<AssistantMessage.ToolCall> toolCalls = List.of(
+                new AssistantMessage.ToolCall(
+                        "call-1",
+                        "function",
+                        "sendPurchaseOrder",
+                        "{\"purchaseOrderId\":42}"
+
+                )
+        );
+        UserMessage userMessage = new UserMessage("Mensaje usuario");
+        AssistantMessage assistantMessage = AssistantMessage.builder()
+                .content(null)
+                .toolCalls(toolCalls)
+                .build();
+        List<AgentMessage> history = messageMapper.toAgent(List.of(userMessage, assistantMessage));
+
+        AgentRunSession session = new AgentRunSession(
+                "run-123",
+                5000L,
+                500L,
+                0.002,
+                1,
+                history
+        );
+        given(runStateRepository.findById("run-123"))
+                .willReturn(Optional.of(session));
+        ToolResponseMessage.ToolResponse toolResponse =
+                new ToolResponseMessage.ToolResponse("call-1", "sendPurchaseOrder", "resultado");
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willReturn(ToolExecutionResult.builder().conversationHistory(
+                                List.of(ToolResponseMessage.builder().responses(List.of(toolResponse)).build()))
+                        .build());
+        ChatResponse responseWithoutToolCalls = buildResponseWithToolCalls(null, toolCalls, DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        given(chatModel.call(any(Prompt.class))).willReturn(responseWithoutToolCalls);
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK, HITL_SENDS_ON);
+
+        // When
+        AgentRunResult result = agent.resume("run-123");
+
+        // Then
+        AgentRunResult.Paused paused = assertInstanceOf(AgentRunResult.Paused.class, result);
+        assertThat(paused.pendingToolCalls()).hasSize(1);
+        assertThat(paused.pendingToolCalls().getFirst().name()).isEqualTo("sendPurchaseOrder");
+        assertThat(paused.pendingToolCalls().getFirst().arguments()).isEqualTo("{\"purchaseOrderId\":42}");
+        assertThat(paused.iterations()).isEqualTo(2);
+        assertThat(paused.tokensTotal()).isEqualTo(650);
+        then(runStateRepository).should(times(1)).save(any(), any());
+        then(runStateRepository).should(never()).deleteById(any());
+
     }
 
     // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.
