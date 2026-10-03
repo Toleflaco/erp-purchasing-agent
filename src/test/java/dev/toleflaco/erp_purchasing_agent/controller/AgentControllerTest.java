@@ -4,6 +4,7 @@ import dev.toleflaco.erp_purchasing_agent.agent.AgentRunResult;
 import dev.toleflaco.erp_purchasing_agent.agent.ReActAgent;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
 import dev.toleflaco.erp_purchasing_agent.hitl.PendingToolCall;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -55,6 +56,7 @@ public class AgentControllerTest {
         given(agent.run(anyString()))
                 .willReturn(new AgentRunResult.Paused(
                         "run-abc",
+                        "cualquier cosa",
                         List.of(new PendingToolCall("sendPurchaseOrder", "{\"purchaseOrderId\":42}")),
                         1L,
                         160L,
@@ -71,6 +73,29 @@ public class AgentControllerTest {
                 .andExpect(jsonPath("$.pending_tool_calls.length()").value(1))
                 .andExpect(jsonPath("$.pending_tool_calls[0].name").value("sendPurchaseOrder"))
                 .andExpect(jsonPath("$.pending_tool_calls[0].arguments").value("{\"purchaseOrderId\":42}"))
+                .andExpect(jsonPath("$.iterations").value(1))
+                .andExpect(jsonPath("$.tokens_total").value(160))
+                .andExpect(jsonPath("$.duration_ms").value(1232))
+                .andExpect(jsonPath("$.cost_usd").value(0.0023));
+
+    }
+
+    @Disabled("S26-J: endpoint approve pending")
+    @Test
+    void shouldReturn200OkWhenApprovalResumesAndCompletes() throws Exception {
+        // Given
+        given(agent.resume(anyString()))
+                .willReturn(new AgentRunResult.Completed(
+                        "orden aprobada y procesada",
+                        1,
+                        160,
+                        1232,
+                        0.0023
+                ));
+        // When + Then
+        mockMvc.perform(post("/agent/run/run-abc/approve"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text").value("orden aprobada y procesada"))
                 .andExpect(jsonPath("$.iterations").value(1))
                 .andExpect(jsonPath("$.tokens_total").value(160))
                 .andExpect(jsonPath("$.duration_ms").value(1232))

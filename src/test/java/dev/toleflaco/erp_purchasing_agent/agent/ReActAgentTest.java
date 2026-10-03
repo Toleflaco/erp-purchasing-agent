@@ -434,6 +434,7 @@ class ReActAgentTest {
         // Then
         AgentRunResult.Paused paused = assertInstanceOf(AgentRunResult.Paused.class, result);
         assertThat(paused.pendingToolCalls()).hasSize(1);
+        assertThat(paused.originalPrompt()).isEqualTo("Mensaje usuario");
         assertThat(paused.pendingToolCalls().getFirst().name()).isEqualTo("sendPurchaseOrder");
         assertThat(paused.pendingToolCalls().getFirst().arguments()).isEqualTo("{\"purchaseOrderId\":42}");
         assertThat(paused.iterations()).isEqualTo(2);

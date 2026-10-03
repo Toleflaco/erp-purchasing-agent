@@ -17,6 +17,7 @@ public sealed interface AgentRunResult
 
         record Paused(
                 String runId,
+                String originalPrompt,
                 List<PendingToolCall> pendingToolCalls,
                 long iterations,
                 long tokensTotal,

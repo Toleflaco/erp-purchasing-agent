@@ -4,6 +4,7 @@ package dev.toleflaco.erp_purchasing_agent.agent;
 import dev.toleflaco.erp_purchasing_agent.config.AgentGuardrailsProperties;
 import dev.toleflaco.erp_purchasing_agent.config.LlmPricingProperties;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
+import dev.toleflaco.erp_purchasing_agent.exception.RunSessionNotFoundException;
 import dev.toleflaco.erp_purchasing_agent.hitl.AgentMessage;
 import dev.toleflaco.erp_purchasing_agent.hitl.AgentRunSession;
 import dev.toleflaco.erp_purchasing_agent.hitl.HitlProperties;
@@ -119,6 +120,7 @@ public class ReActAgent {
                 repository.save(session, hitlProperties.ttl());
                 return new AgentRunResult.Paused(
                         runId,
+                        prompt,
                         mapper.toPendingToolCalls(toolCalls),
                         iteration,
                         totalPromptTokens + totalCompletionTokens,
@@ -174,7 +176,8 @@ public class ReActAgent {
 
     public AgentRunResult resume(String runId) {
 
-        AgentRunSession session = repository.findById(runId).orElseThrow();
+        AgentRunSession session = repository.findById(runId)
+                .orElseThrow(() -> new RunSessionNotFoundException(runId));
         long iteration = session.iterations();
         long totalTokens = session.totalTokens();
         double accumulatedCost = session.costUsd();
@@ -184,6 +187,7 @@ public class ReActAgent {
                 runId, iteration, totalTokens, session.usefulDurationMs());
 
         List<Message> messages = mapper.toSpringAi(session.conversationHistory());
+        String originalPrompt = ((UserMessage) messages.getFirst()).getText();
         ToolCallback[] toolCallbacks = new SyncMcpToolCallbackProvider(mcpClients).getToolCallbacks();
         AnthropicChatOptions options = AnthropicChatOptions.builder()
                 .toolCallbacks(toolCallbacks)
@@ -222,6 +226,7 @@ public class ReActAgent {
                 repository.save(session, hitlProperties.ttl());
                 return new AgentRunResult.Paused(
                         runId,
+                        originalPrompt,
                         mapper.toPendingToolCalls(toolCalls),
                         iteration,
                         totalTokens,
