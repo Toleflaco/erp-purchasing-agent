@@ -3,6 +3,7 @@ package dev.toleflaco.erp_purchasing_agent.controller;
 import dev.toleflaco.erp_purchasing_agent.agent.AgentRunResult;
 import dev.toleflaco.erp_purchasing_agent.agent.ReActAgent;
 import dev.toleflaco.erp_purchasing_agent.exception.GuardrailExceededException;
+import dev.toleflaco.erp_purchasing_agent.exception.RunSessionNotFoundException;
 import dev.toleflaco.erp_purchasing_agent.hitl.PendingToolCall;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
@@ -80,7 +81,6 @@ public class AgentControllerTest {
 
     }
 
-    @Disabled("S26-J: endpoint approve pending")
     @Test
     void shouldReturn200OkWhenApprovalResumesAndCompletes() throws Exception {
         // Given
@@ -102,5 +102,21 @@ public class AgentControllerTest {
                 .andExpect(jsonPath("$.cost_usd").value(0.0023));
 
     }
+
+    @Test
+    void shouldReturn410GoneWhenRunSessionNotFound() throws Exception {
+        // Given
+        given(agent.resume(anyString()))
+                .willThrow(new RunSessionNotFoundException("run-missing"));
+
+        // When + Then
+        mockMvc.perform(post("/agent/run/run-missing/approve"))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.status").value(410))
+                .andExpect(jsonPath("$.title").value("Run session not found"))
+                .andExpect(jsonPath("$.run_id").value("run-missing"));
+
+    }
+
 
 }
