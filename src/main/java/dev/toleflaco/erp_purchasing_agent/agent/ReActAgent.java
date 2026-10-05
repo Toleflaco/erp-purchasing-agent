@@ -83,8 +83,10 @@ public class ReActAgent {
                 .build();
 
         int iteration = 0;
-        int totalPromptTokens = 0;
-        int totalCompletionTokens = 0;
+        long totalTokens = 0L;
+        double accumulatedCost = 0.0;
+        int promptTokens;
+        int completionTokens;
         Instant start = clock.instant();
 
 
@@ -94,8 +96,10 @@ public class ReActAgent {
         ChatResponse response = chatModel.call(currentPrompt);
         iteration++;
         logLlmResponse(response, iteration);
-        totalPromptTokens += response.getMetadata().getUsage().getPromptTokens();
-        totalCompletionTokens += response.getMetadata().getUsage().getCompletionTokens();
+        promptTokens = response.getMetadata().getUsage().getPromptTokens();
+        completionTokens = response.getMetadata().getUsage().getCompletionTokens();
+        totalTokens += promptTokens + completionTokens;
+        accumulatedCost += computeCost(promptTokens, completionTokens);
         // 3. Bucle ReAct: mientras el LLM siga pidiendo tools, itera
         while (response.hasToolCalls()) {
             // Extraer las tools calls
@@ -104,7 +108,6 @@ public class ReActAgent {
                     .filter(toolCall -> hitlProperties.sensitiveTools().contains(toolCall.name())).findFirst();
             if (sensitiveToolCall.isPresent()) {
                 String runId = UUID.randomUUID().toString();
-                double cost = computeCost(totalPromptTokens, totalCompletionTokens);
                 long durationMs = computeElapsedMs(start);
                 List<Message> fullHistory = new ArrayList<>(currentPrompt.getInstructions());
                 fullHistory.add(response.getResult().getOutput());
@@ -112,8 +115,8 @@ public class ReActAgent {
                 AgentRunSession session = new AgentRunSession(
                         runId,
                         durationMs,
-                        totalPromptTokens + totalCompletionTokens,
-                        cost,
+                        totalTokens,
+                        accumulatedCost,
                         iteration,
                         history
                 );
@@ -123,13 +126,13 @@ public class ReActAgent {
                         prompt,
                         mapper.toPendingToolCalls(toolCalls),
                         iteration,
-                        totalPromptTokens + totalCompletionTokens,
+                        totalTokens,
                         durationMs,
-                        cost
+                        accumulatedCost
                 );
             }
             ToolExecutionResult result = toolCallingManager.executeToolCalls(currentPrompt, response);
-            log.debug("iteration start iteration={} messages_size={} tokens_accumulated={}", iteration + 1, result.conversationHistory().size(), totalPromptTokens + totalCompletionTokens);
+            log.debug("iteration start iteration={} messages_size={} tokens_accumulated={}", iteration + 1, result.conversationHistory().size(), totalTokens);
             ToolResponseMessage toolResponseMessage = (ToolResponseMessage) result.conversationHistory().get(result.conversationHistory().size() - 1);
             for (ToolResponseMessage.ToolResponse tr : toolResponseMessage.getResponses()) {
                 String resultToLog = tr.responseData().length() > 200 ? tr.responseData().substring(0, 200) + "...(truncated, " + tr.responseData().length() + " total chars)" : tr.responseData();
@@ -140,7 +143,6 @@ public class ReActAgent {
                 log.debug("guardrail exceeded type={} value={} limit={}", ITERATIONS, iteration, agentGuardrails.maxIterations());
                 throw new GuardrailExceededException(ITERATIONS, iteration, agentGuardrails.maxIterations());
             }
-            long totalTokens = totalPromptTokens + totalCompletionTokens;
             if (totalTokens >= agentGuardrails.maxTokensBudget()) {
                 log.debug("guardrail exceeded type={} value={} limit={}", TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
                 throw new GuardrailExceededException(TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
@@ -153,24 +155,25 @@ public class ReActAgent {
             response = chatModel.call(currentPrompt);
             iteration++;
             logLlmResponse(response, iteration);
-            totalPromptTokens += response.getMetadata().getUsage().getPromptTokens();
-            totalCompletionTokens += response.getMetadata().getUsage().getCompletionTokens();
+            promptTokens = response.getMetadata().getUsage().getPromptTokens();
+            completionTokens = response.getMetadata().getUsage().getCompletionTokens();
+            totalTokens += promptTokens + completionTokens;
+            accumulatedCost += computeCost(promptTokens, completionTokens);
         }
 
         // 4. Respuesta final del LLM sin tool calls
-        double cost = computeCost(totalPromptTokens, totalCompletionTokens);
         long durationMs = computeElapsedMs(start);
         String finalText = response.getResult().getOutput().getText();
         log.debug("agent run completed iterations={} tokens_total={} duration_ms={} cost_usd={}", iteration,
-                totalPromptTokens + totalCompletionTokens,
+                totalTokens,
                 durationMs,
-                String.format("%.6f", cost));
+                String.format("%.6f", accumulatedCost));
         return new AgentRunResult.Completed(
                 finalText,
                 iteration,
-                totalPromptTokens + totalCompletionTokens,
+                totalTokens,
                 durationMs,
-                cost
+                accumulatedCost
         );
     }
 
