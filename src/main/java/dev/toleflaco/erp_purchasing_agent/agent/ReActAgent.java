@@ -194,7 +194,7 @@ public class ReActAgent {
                 .build();
         AssistantMessage lastAssistant = (AssistantMessage) messages.getLast();
         ChatResponse response = new ChatResponse(List.of(new Generation(lastAssistant)));
-        Prompt currentPrompt = new Prompt(messages, options);
+        Prompt currentPrompt = new Prompt(messages.subList(0, messages.size() - 1), options);
 
         ToolExecutionResult result = toolCallingManager.executeToolCalls(currentPrompt, response);
         currentPrompt = new Prompt(result.conversationHistory(), options);
@@ -246,7 +246,7 @@ public class ReActAgent {
                 log.debug("guardrail exceeded type={} value={} limit={}", ITERATIONS, iteration, agentGuardrails.maxIterations());
                 throw new GuardrailExceededException(ITERATIONS, iteration, agentGuardrails.maxIterations());
             }
-           if (totalTokens >= agentGuardrails.maxTokensBudget()) {
+            if (totalTokens >= agentGuardrails.maxTokensBudget()) {
                 log.debug("guardrail exceeded type={} value={} limit={}", TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
                 throw new GuardrailExceededException(TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
             }
@@ -277,7 +277,6 @@ public class ReActAgent {
                 accumulatedCost
         );
     }
-
 
 
     private String formatToolCalls(List<AssistantMessage.ToolCall> toolCalls) {

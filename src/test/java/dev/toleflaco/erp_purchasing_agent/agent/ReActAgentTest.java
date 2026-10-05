@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -33,6 +34,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -442,6 +444,85 @@ class ReActAgentTest {
         then(runStateRepository).should(times(1)).save(any(), any());
         then(runStateRepository).should(never()).deleteById(any());
 
+    }
+
+    @Test
+    void shouldNotDuplicateToolUseIdsInPromptSentToLlmAfterResume() {
+
+        // Given
+        List<AssistantMessage.ToolCall> toolCalls = List.of(
+                new AssistantMessage.ToolCall(
+                        "call-1",
+                        "function",
+                        "sendPurchaseOrder",
+                        "{\"purchaseOrderId\":42}"
+
+                )
+        );
+        UserMessage userMessage = new UserMessage("Mensaje usuario");
+        AssistantMessage assistantMessage = AssistantMessage.builder()
+                .content(null)
+                .toolCalls(toolCalls)
+                .build();
+        List<AgentMessage> history = messageMapper.toAgent(List.of(userMessage, assistantMessage));
+
+        AgentRunSession session = new AgentRunSession(
+                "run-123",
+                5000L,
+                500L,
+                0.002,
+                1,
+                history
+        );
+        given(runStateRepository.findById("run-123"))
+                .willReturn(Optional.of(session));
+        ToolResponseMessage.ToolResponse toolResponse =
+                new ToolResponseMessage.ToolResponse("call-1", "sendPurchaseOrder", "resultado");
+        ToolResponseMessage toolResponseMessage = ToolResponseMessage.builder()
+                .responses(List.of(toolResponse))
+                .build();
+        given(toolCallingManager.executeToolCalls(any(Prompt.class), any(ChatResponse.class)))
+                .willAnswer(invocation -> {
+                    // 1. Extraer el Prompt (argumento 0) y el ChatResponse (argumento 1).
+                    Prompt prompt = invocation.getArgument(0);           // cast implicito
+                    ChatResponse chatResponse = invocation.getArgument(1);
+                    // 2. Sacar instructions del Prompt
+                    List<Message> instructions = prompt.getInstructions();
+                    // 3. Sacar el AssistantMessage del ChatResponse.
+                    AssistantMessage assistantMessage1 = chatResponse.getResult().getOutput();
+                    // 4. Construir el nuevo conversationHistory concatenando: instructions + assistantMessage + toolResponseMessage.
+                    List<Message> newHistory = new ArrayList<>(instructions);
+                    newHistory.add(assistantMessage1);
+                    newHistory.add(toolResponseMessage);
+                    // 5. Devolver un ToolExecutionResult con ese conversationHistory.
+                    return ToolExecutionResult.builder()
+                            .conversationHistory(newHistory)
+                            .build();
+                });
+
+        ChatResponse responseWithSensitiveTool = buildResponseWithoutToolCalls("orden enviada", DEFAULT_PROMPT_TOKENS, DEFAULT_COMPLETION_TOKENS);
+        given(chatModel.call(any(Prompt.class))).willReturn(responseWithSensitiveTool);
+        agent = buildAgent(DEFAULT_MAX_ITERATIONS, DEFAULT_MAX_TOKENS_BUDGET, DEFAULT_MAX_DURATION_MS, DEFAULT_CLOCK, HITL_SENDS_ON);
+
+        // When
+        AgentRunResult result = agent.resume("run-123");
+
+        // Then
+        ArgumentCaptor<Prompt> promptCaptor = ArgumentCaptor.forClass(Prompt.class);
+        then(chatModel).should(times(1)).call(promptCaptor.capture());
+        Prompt capturedPrompt = promptCaptor.getValue();
+        List<String> toolUseIds = capturedPrompt.getInstructions().stream()
+                .filter(m -> m instanceof AssistantMessage) // paso 1: solo AssistantMessage
+                .map(ma -> ((AssistantMessage) ma).getToolCalls())              // paso 2: castear a AssistantMessage y sacar sus toolCalls
+                .flatMap(ltc -> ltc.stream())          // paso 3: aplanar la lista de toolCalls en una sola stream
+                .map(tc -> tc.id())              // paso 4: de cada toolCall, extraer el id
+                .toList();
+        assertThat(toolUseIds).doesNotHaveDuplicates();
+        AgentRunResult.Completed completed = assertInstanceOf(AgentRunResult.Completed.class, result);
+        assertThat(completed.text()).isEqualTo("orden enviada");
+        assertThat(completed.iterations()).isEqualTo(2);
+        assertThat(completed.tokensTotal()).isEqualTo(650);
+        then(runStateRepository).should().deleteById("run-123");
     }
 
     // Helper para construir un ChatResponse "sin tool calls" con texto y tokens.
