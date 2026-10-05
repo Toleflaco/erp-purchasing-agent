@@ -82,7 +82,7 @@ public class ReActAgent {
                 .toolCallbacks(toolCallbacks)
                 .build();
 
-        int iteration = 0;
+        long iteration = 0;
         long totalTokens = 0L;
         double accumulatedCost = 0.0;
         int promptTokens;
@@ -100,6 +100,61 @@ public class ReActAgent {
         completionTokens = response.getMetadata().getUsage().getCompletionTokens();
         totalTokens += promptTokens + completionTokens;
         accumulatedCost += computeCost(promptTokens, completionTokens);
+        String runId = UUID.randomUUID().toString();
+        return executeToolCallLoop(runId, prompt, currentPrompt, response, options, iteration, totalTokens, accumulatedCost, start);
+    }
+
+    public AgentRunResult resume(String runId) {
+
+        AgentRunSession session = repository.findById(runId)
+                .orElseThrow(() -> new RunSessionNotFoundException(runId));
+        long iteration = session.iterations();
+        long totalTokens = session.totalTokens();
+        double accumulatedCost = session.costUsd();
+        // Es sintético el start, se le resta lo que lleva de las otras llamadas, para que el bucle quede lo más parecido al de run()
+        Instant start = clock.instant().minus(Duration.ofMillis(session.usefulDurationMs()));
+        log.debug("resume start runId={} iteration={} tokens_accumulated={} duration_ms_accumulated={}",
+                runId, iteration, totalTokens, session.usefulDurationMs());
+
+        List<Message> messages = mapper.toSpringAi(session.conversationHistory());
+        String originalPrompt = ((UserMessage) messages.getFirst()).getText();
+        ToolCallback[] toolCallbacks = new SyncMcpToolCallbackProvider(mcpClients).getToolCallbacks();
+        AnthropicChatOptions options = AnthropicChatOptions.builder()
+                .toolCallbacks(toolCallbacks)
+                .build();
+        AssistantMessage lastAssistant = (AssistantMessage) messages.getLast();
+        ChatResponse response = new ChatResponse(List.of(new Generation(lastAssistant)));
+        Prompt currentPrompt = new Prompt(messages.subList(0, messages.size() - 1), options);
+
+        ToolExecutionResult toolResult = toolCallingManager.executeToolCalls(currentPrompt, response);
+        currentPrompt = new Prompt(toolResult.conversationHistory(), options);
+        response = chatModel.call(currentPrompt);
+        iteration++;
+        int promptTokens = response.getMetadata().getUsage().getPromptTokens();
+        int completionTokens = response.getMetadata().getUsage().getCompletionTokens();
+        totalTokens += promptTokens + completionTokens;
+        accumulatedCost += computeCost(promptTokens, completionTokens);
+        AgentRunResult result = executeToolCallLoop(runId, originalPrompt, currentPrompt, response, options, iteration, totalTokens, accumulatedCost, start);
+        if (result instanceof AgentRunResult.Completed) {
+            repository.deleteById(runId);
+        }
+        return result;
+
+    }
+
+    private AgentRunResult executeToolCallLoop(
+            String runId,
+            String originalPrompt,
+            Prompt currentPrompt,
+            ChatResponse response,
+            AnthropicChatOptions options,
+            long iteration,
+            long totalTokens,
+            double accumulatedCost,
+            Instant start
+    ) {
+        int promptTokens;
+        int completionTokens;
         // 3. Bucle ReAct: mientras el LLM siga pidiendo tools, itera
         while (response.hasToolCalls()) {
             // Extraer las tools calls
@@ -107,7 +162,7 @@ public class ReActAgent {
             Optional<AssistantMessage.ToolCall> sensitiveToolCall = toolCalls.stream()
                     .filter(toolCall -> hitlProperties.sensitiveTools().contains(toolCall.name())).findFirst();
             if (sensitiveToolCall.isPresent()) {
-                String runId = UUID.randomUUID().toString();
+
                 long durationMs = computeElapsedMs(start);
                 List<Message> fullHistory = new ArrayList<>(currentPrompt.getInstructions());
                 fullHistory.add(response.getResult().getOutput());
@@ -123,7 +178,7 @@ public class ReActAgent {
                 repository.save(session, hitlProperties.ttl());
                 return new AgentRunResult.Paused(
                         runId,
-                        prompt,
+                        originalPrompt,
                         mapper.toPendingToolCalls(toolCalls),
                         iteration,
                         totalTokens,
@@ -177,111 +232,6 @@ public class ReActAgent {
         );
     }
 
-    public AgentRunResult resume(String runId) {
-
-        AgentRunSession session = repository.findById(runId)
-                .orElseThrow(() -> new RunSessionNotFoundException(runId));
-        long iteration = session.iterations();
-        long totalTokens = session.totalTokens();
-        double accumulatedCost = session.costUsd();
-        // Es sintético el start, se le resta lo que lleva de las otras llamadas, para que el bucle quede lo más parecido al de run()
-        Instant start = clock.instant().minus(Duration.ofMillis(session.usefulDurationMs()));
-        log.debug("resume start runId={} iteration={} tokens_accumulated={} duration_ms_accumulated={}",
-                runId, iteration, totalTokens, session.usefulDurationMs());
-
-        List<Message> messages = mapper.toSpringAi(session.conversationHistory());
-        String originalPrompt = ((UserMessage) messages.getFirst()).getText();
-        ToolCallback[] toolCallbacks = new SyncMcpToolCallbackProvider(mcpClients).getToolCallbacks();
-        AnthropicChatOptions options = AnthropicChatOptions.builder()
-                .toolCallbacks(toolCallbacks)
-                .build();
-        AssistantMessage lastAssistant = (AssistantMessage) messages.getLast();
-        ChatResponse response = new ChatResponse(List.of(new Generation(lastAssistant)));
-        Prompt currentPrompt = new Prompt(messages.subList(0, messages.size() - 1), options);
-
-        ToolExecutionResult result = toolCallingManager.executeToolCalls(currentPrompt, response);
-        currentPrompt = new Prompt(result.conversationHistory(), options);
-        response = chatModel.call(currentPrompt);
-        iteration++;
-        int promptTokens = response.getMetadata().getUsage().getPromptTokens();
-        int completionTokens = response.getMetadata().getUsage().getCompletionTokens();
-        totalTokens += promptTokens + completionTokens;
-        accumulatedCost += computeCost(promptTokens, completionTokens);
-
-        while (response.hasToolCalls()) {
-            // Extraer las tools calls
-            List<AssistantMessage.ToolCall> toolCalls = response.getResult().getOutput().getToolCalls();
-            Optional<AssistantMessage.ToolCall> sensitiveToolCall = toolCalls.stream()
-                    .filter(toolCall -> hitlProperties.sensitiveTools().contains(toolCall.name())).findFirst();
-            if (sensitiveToolCall.isPresent()) {
-                long durationMs = computeElapsedMs(start);
-                List<Message> fullHistory = new ArrayList<>(currentPrompt.getInstructions());
-                fullHistory.add(response.getResult().getOutput());
-                List<AgentMessage> history = mapper.toAgent(fullHistory);
-                session = new AgentRunSession(
-                        runId,
-                        durationMs,
-                        totalTokens,
-                        accumulatedCost,
-                        iteration,
-                        history
-                );
-                repository.save(session, hitlProperties.ttl());
-                return new AgentRunResult.Paused(
-                        runId,
-                        originalPrompt,
-                        mapper.toPendingToolCalls(toolCalls),
-                        iteration,
-                        totalTokens,
-                        durationMs,
-                        accumulatedCost
-                );
-            }
-            result = toolCallingManager.executeToolCalls(currentPrompt, response);
-            log.debug("iteration start iteration={} messages_size={} tokens_accumulated={}", iteration + 1, result.conversationHistory().size(), totalTokens);
-            ToolResponseMessage toolResponseMessage = (ToolResponseMessage) result.conversationHistory().get(result.conversationHistory().size() - 1);
-            for (ToolResponseMessage.ToolResponse tr : toolResponseMessage.getResponses()) {
-                String resultToLog = tr.responseData().length() > 200 ? tr.responseData().substring(0, 200) + "...(truncated, " + tr.responseData().length() + " total chars)" : tr.responseData();
-                log.debug("tool result iteration={} tool_name={} tool_call_id={} result={}", iteration, tr.name(), tr.id(), resultToLog);
-            }
-            currentPrompt = new Prompt(result.conversationHistory(), options);
-            if (iteration >= agentGuardrails.maxIterations()) {
-                log.debug("guardrail exceeded type={} value={} limit={}", ITERATIONS, iteration, agentGuardrails.maxIterations());
-                throw new GuardrailExceededException(ITERATIONS, iteration, agentGuardrails.maxIterations());
-            }
-            if (totalTokens >= agentGuardrails.maxTokensBudget()) {
-                log.debug("guardrail exceeded type={} value={} limit={}", TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
-                throw new GuardrailExceededException(TOKENS, totalTokens, agentGuardrails.maxTokensBudget());
-            }
-            long elapsedMs = computeElapsedMs(start);
-            if (elapsedMs >= agentGuardrails.maxDurationMs()) {
-                log.debug("guardrail exceeded type={} value={} limit={}", DURATION, elapsedMs, agentGuardrails.maxDurationMs());
-                throw new GuardrailExceededException(DURATION, elapsedMs, agentGuardrails.maxDurationMs());
-            }
-            response = chatModel.call(currentPrompt);
-            iteration++;
-            logLlmResponse(response, (int) iteration);
-            promptTokens = response.getMetadata().getUsage().getPromptTokens();
-            completionTokens = response.getMetadata().getUsage().getCompletionTokens();
-            totalTokens += promptTokens + completionTokens;
-            accumulatedCost += computeCost(promptTokens, completionTokens);
-
-        }
-        repository.deleteById(runId);
-        String finalText = response.getResult().getOutput().getText();
-        long durationMs = computeElapsedMs(start);
-        log.debug("agent run completed iterations={} tokens_total={} duration_ms={} cost_usd={}",
-                iteration, totalTokens, durationMs, String.format("%.6f", accumulatedCost));
-        return new AgentRunResult.Completed(
-                finalText,
-                iteration,
-                totalTokens,
-                durationMs,
-                accumulatedCost
-        );
-    }
-
-
     private String formatToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
 
         return toolCalls.stream()
@@ -290,7 +240,7 @@ public class ReActAgent {
 
     }
 
-    private void logLlmResponse(ChatResponse response, int iteration) {
+    private void logLlmResponse(ChatResponse response, long iteration) {
         String text = response.getResult().getOutput().getText();
         String toolCalls = formatToolCalls(response.getResult().getOutput().getToolCalls());
         String finishReason = response.getResult().getMetadata().getFinishReason();
