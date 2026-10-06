@@ -77,7 +77,10 @@ public class ReActAgent {
         // 1. Preparación (una sola vez)
         List<Message> messages = new ArrayList<>();
         messages.add(new UserMessage(prompt));
-        ToolCallback[] toolCallbacks = new SyncMcpToolCallbackProvider(mcpClients).getToolCallbacks();
+        ToolCallback[] toolCallbacks = SyncMcpToolCallbackProvider.builder()
+                .mcpClients(mcpClients)
+                .build()
+                .getToolCallbacks();
         AnthropicChatOptions options = AnthropicChatOptions.builder()
                 .toolCallbacks(toolCallbacks)
                 .build();
@@ -118,7 +121,10 @@ public class ReActAgent {
 
         List<Message> messages = mapper.toSpringAi(session.conversationHistory());
         String originalPrompt = ((UserMessage) messages.getFirst()).getText();
-        ToolCallback[] toolCallbacks = new SyncMcpToolCallbackProvider(mcpClients).getToolCallbacks();
+        ToolCallback[] toolCallbacks = SyncMcpToolCallbackProvider.builder()
+                .mcpClients(mcpClients)
+                .build()
+                .getToolCallbacks();
         AnthropicChatOptions options = AnthropicChatOptions.builder()
                 .toolCallbacks(toolCallbacks)
                 .build();
