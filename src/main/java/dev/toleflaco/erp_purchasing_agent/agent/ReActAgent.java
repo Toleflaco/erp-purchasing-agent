@@ -94,7 +94,6 @@ public class ReActAgent {
 
 
         Prompt currentPrompt = new Prompt(messages, options);
-        log.debug("iteration start iteration={} messages_size={} tokens_accumulated={}", iteration + 1, 1, 0);
         // 2. Primera llamada al LLM (fuera del while para inicializar la condición)
         ChatResponse response = chatModel.call(currentPrompt);
         iteration++;
