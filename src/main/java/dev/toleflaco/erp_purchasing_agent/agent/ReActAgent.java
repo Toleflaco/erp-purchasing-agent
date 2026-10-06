@@ -233,11 +233,9 @@ public class ReActAgent {
     }
 
     private String formatToolCalls(List<AssistantMessage.ToolCall> toolCalls) {
-
         return toolCalls.stream()
                 .map(tc -> tc.name() + "(" + tc.arguments() + ")")
                 .collect(Collectors.joining(", ", "[", "]"));
-
     }
 
     private void logLlmResponse(ChatResponse response, long iteration) {
