@@ -2,6 +2,8 @@
 
 ReAct-style AI agent that consumes the tools exposed by [erp-mcp-server](https://github.com/Toleflaco/erp-mcp-server) via the Model Context Protocol. Given a natural-language purchasing goal ("check what's below minimum stock and create purchase orders for the affected suppliers"), the agent iteratively reasons, calls MCP tools, observes the results, and decides the next step until the goal is met.
 
+Implements **Human-in-the-Loop (HITL)**: the agent pauses before executing irreversible actions (e.g. sending a purchase order), persists its full conversation state in Redis, and resumes from exactly that point once the operator approves or rejects the action.
+
 Project 2b of the [AI Engineer Roadmap · Java + Spring AI](https://github.com/Toleflaco/ai-engineer-roadmap-java), Session 16 (ReAct agents).
 
 ## Tech stack
@@ -10,23 +12,43 @@ Project 2b of the [AI Engineer Roadmap · Java + Spring AI](https://github.com/T
 - Spring Boot 4.1.0
 - Spring AI 2.0.0 (`spring-ai-starter-mcp-client-webmvc`)
 - Anthropic Claude Sonnet 4.5 (via `spring-ai-starter-model-anthropic`)
+- Redis (conversation state persistence for HITL)
 - Docker Compose
 
 ## Architecture
 
-```
 User goal (natural language)
-        |
-        v
-+------------------+       MCP Streamable HTTP       +--------------------+
-|   agent (this)   | <----------------------------> |  erp-mcp-server     |
-|  ReAct loop      |       :8080/mcp                 |  (separate repo)    |
-|  Spring AI       |                                  |  Spring Boot MCP    |
-|  Claude Sonnet   |                                  |  server + Postgres  |
-+------------------+                                  +--------------------+
-```
+|
+v
++------------------+ MCP Streamable HTTP +--------------------+
+| agent (this) | <----------------------------> | erp-mcp-server |
+| ReAct loop | :8080/mcp | (separate repo) |
+| Spring AI | | Spring Boot MCP |
+| Claude Sonnet | | server + Postgres |
++------------------+ +--------------------+
+|
+| HITL pause (202 Accepted)
+v
++------------------+
+| Redis | ← full conversation state persisted
+| (AgentRunSession)|
++------------------+
+|
+| operator approve/reject → resume from exact pause point
+v
++------------------+
+| agent resumes |
++------------------+
+
 
 The agent runs the standard ReAct cycle: **Reason → Act (call MCP tool) → Observe → repeat** until the LLM decides the goal is satisfied. Tool discovery is dynamic: the agent asks the MCP server for the current tool catalog on startup instead of hardcoding tool names.
+
+### Human-in-the-Loop flow
+
+1. Agent receives a purchasing goal and starts the ReAct loop (`POST /agent/run` → `202 Accepted` + `runId`).
+2. When the agent reaches an irreversible action, it pauses and persists the full conversation state (messages, tokens, cost, iteration count) in Redis under the `runId`.
+3. The operator reviews the proposed action and calls `POST /agent/resume/{runId}` with `approve` or `reject`.
+4. The agent resumes from the exact pause point — no context is lost, no LLM call is repeated.
 
 ## Quick start
 
@@ -36,10 +58,15 @@ Prerequisite: [erp-mcp-server](https://github.com/Toleflaco/erp-mcp-server) runn
 git clone git@github.com:Toleflaco/erp-purchasing-agent.git
 cd erp-purchasing-agent
 export ANTHROPIC_API_KEY=<your-key>
-./mvnw spring-boot:run
+docker compose up --build
 ```
 
-The agent exposes a REST endpoint to submit purchasing goals in natural language. See the source for the exact endpoint path and payload shape.
+### Key endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/agent/run` | Start a new purchasing goal (returns `runId` if paused) |
+| `POST` | `/agent/resume/{runId}` | Resume a paused run with operator approval |
 
 ## Related repositories
 
@@ -49,4 +76,4 @@ The agent exposes a REST endpoint to submit purchasing goals in natural language
 
 ---
 
-*Last updated: 2026-09-21*
+*Last updated: 2026-10-06*
