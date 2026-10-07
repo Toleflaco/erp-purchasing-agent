@@ -47,8 +47,10 @@ The agent runs the standard ReAct cycle: **Reason → Act (call MCP tool) → Ob
 
 1. Agent receives a purchasing goal and starts the ReAct loop (`POST /agent/run` → `202 Accepted` + `runId`).
 2. When the agent reaches an irreversible action, it pauses and persists the full conversation state (messages, tokens, cost, iteration count) in Redis under the `runId`.
-3. The operator reviews the proposed action and calls `POST /agent/resume/{runId}` with `approve` or `reject`.
+3. The operator reviews the proposed action and calls `POST /agent/run/{runId}/approve` to approve and resume.
 4. The agent resumes from the exact pause point — no context is lost, no LLM call is repeated.
+
+> Note: a `reject` endpoint is on the roadmap but not yet implemented. Currently, cancelling a pending run means letting its Redis session expire.
 
 ## Quick start
 
@@ -66,7 +68,7 @@ docker compose up --build
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/agent/run` | Start a new purchasing goal (returns `runId` if paused) |
-| `POST` | `/agent/resume/{runId}` | Resume a paused run with operator approval |
+| `POST` | `/agent/run/{runId}/approve` | Approve a paused run and resume execution |
 
 ## Related repositories
 
