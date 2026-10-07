@@ -70,6 +70,77 @@ docker compose up --build
 | `POST` | `/agent/run` | Start a new purchasing goal (returns `runId` if paused) |
 | `POST` | `/agent/run/{runId}/approve` | Approve a paused run and resume execution |
 
+### Example requests
+
+#### Start a run that pauses for approval
+
+**Request**
+
+```bash
+curl -X POST http://localhost:8082/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"check stock levels and place purchase orders"}'
+```
+
+**Response** — `202 Accepted`
+
+```json
+{
+  "run_id": "run-abc",
+  "original_prompt": "check stock levels and place purchase orders",
+  "pending_tool_calls": [
+    {
+      "name": "sendPurchaseOrder",
+      "arguments": "{\"purchaseOrderId\":42}"
+    }
+  ],
+  "iterations": 1,
+  "tokens_total": 160,
+  "duration_ms": 1232,
+  "cost_usd": 0.0023
+}
+```
+
+#### Approve a paused run
+
+**Request**
+
+```bash
+curl -X POST http://localhost:8082/agent/run/run-abc/approve
+```
+
+**Response** — `200 OK`
+
+```json
+{
+  "text": "purchase order approved and processed",
+  "iterations": 1,
+  "tokens_total": 160,
+  "duration_ms": 1232,
+  "cost_usd": 0.0023
+}
+```
+
+#### Approve a run that no longer exists
+
+**Request**
+
+```bash
+curl -X POST http://localhost:8082/agent/run/run-missing/approve
+```
+
+**Response** — `410 Gone`
+
+```json
+{
+  "type": "about:blank",
+  "title": "Run session not found",
+  "status": 410,
+  "detail": "Run session not found: run-missing",
+  "run_id": "run-missing"
+}
+```
+
 ## Related repositories
 
 - **[erp-mcp-server](https://github.com/Toleflaco/erp-mcp-server)** — The MCP server this agent consumes.
