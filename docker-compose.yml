@@ -1,6 +1,7 @@
 services:
   redis:
-    image: redis:7.4-alpine
+    image: redis/redis-stack:7.4.0-v0
     container_name: erp-purchasing-redis
     ports:
       - "6381:6379"
+      - "8001:8001"
