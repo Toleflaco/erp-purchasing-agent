@@ -58,4 +58,25 @@ class SimpleVectorStoreTest {
         assertThat(results).extracting(Document::getText).anyMatch(t -> t.contains("Cancelar"));
     }
 
+    @Test
+    void shouldRankLiteralQueryMatchAsTop1() {
+        // given
+        SimpleVectorStore vectorStore = SimpleVectorStore.builder(embeddingModel).build();
+        vectorStore.add(List.of(
+                Document.builder().text("Cancelar un pedido de compra en estado DRAFT").build(),
+                Document.builder().text("Crear un nuevo pedido de compra con líneas").build(),
+                Document.builder().text("Aprobar un pedido de compra pendiente").build(),
+                Document.builder().text("Consultar el estado de un pedido existente").build(),
+                Document.builder().text("Marcar un pedido como enviado al proveedor").build(),
+                Document.builder().text("Recetas de cocina tradicional cántabra").build(),
+                Document.builder().text("El tiempo en Madrid durante el verano").build()
+        ));
+        // when
+        List<Document> results = vectorStore.similaritySearch(SearchRequest.builder()
+                .query("cancelar un pedido en estado DRAFT")
+                .topK(1)
+                .build());
+        // then
+        assertThat(results.get(0).getText()).contains("Cancelar");
+    }
 }
