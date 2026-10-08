@@ -20,6 +20,7 @@ spring:
     redis:
       host: localhost
       port: 6381
+      client-type: jedis
 server:
   port: 8082
 
