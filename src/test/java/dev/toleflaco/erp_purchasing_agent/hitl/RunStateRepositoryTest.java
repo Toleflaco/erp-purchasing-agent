@@ -25,7 +25,7 @@ class RunStateRepositoryTest {
 
     @Container
     @ServiceConnection(name = "redis")
-    static GenericContainer<?> redis = new GenericContainer<>("redis:7.4-alpine")
+    static GenericContainer<?> redis = new GenericContainer<>("redis/redis-stack:7.4.0-v0")
             .withExposedPorts(6379);
 
     @Autowired

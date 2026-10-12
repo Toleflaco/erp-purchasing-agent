@@ -12,7 +12,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(properties = "spring.ai.mcp.client.enabled=false")
-public class RedisVectorStoreTest {
+class RedisVectorStoreTest {
 
     @Autowired
     VectorStore vectorStore;
