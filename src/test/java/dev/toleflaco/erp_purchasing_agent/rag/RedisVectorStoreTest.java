@@ -1,13 +1,16 @@
 package dev.toleflaco.erp_purchasing_agent.rag;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,6 +19,18 @@ class RedisVectorStoreTest {
 
     @Autowired
     VectorStore vectorStore;
+
+    @Autowired
+    StringRedisTemplate redisTemplate;
+
+    @BeforeEach
+    void setup() {
+        Set<String> keys = redisTemplate.keys("default:*");
+        if (keys != null && !keys.isEmpty()) {
+            redisTemplate.delete(keys);
+        }
+    }
+
 
     @Test
     void shouldStoreAndRetrieveASingleDocument() {
