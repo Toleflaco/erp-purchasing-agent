@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import javax.print.Doc;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -81,4 +82,19 @@ class DocumentIngestionTest {
                 .anySatisfy(txt -> assertThat(txt).containsIgnoringCase("procure"));
     }
 
+    @Test
+    void shouldRetrieveChunkForSemanticallyRelatedQuery() throws IOException {
+        // Given
+        String text = erpDomainDocument.getContentAsString(StandardCharsets.UTF_8);
+        TokenTextSplitter splitter = TokenTextSplitter.builder().withChunkSize(200).build();
+        List<Document> chunks = splitter.split(Document.builder().text(text).build());
+        vectorStore.add(chunks);
+
+        // When
+        List<Document> results = vectorStore.similaritySearch(SearchRequest.builder().query("control de activos físicos de la empresa").topK(1).build());
+
+        // Then
+        assertThat(results).extracting(Document::getText)
+                .anySatisfy(txt-> assertThat(txt).containsIgnoringCase("activos fijos"));
+    }
 }
